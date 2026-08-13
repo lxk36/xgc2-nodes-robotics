@@ -1,2 +1,4 @@
-github.com/lxk36/xgc2-orchestration-core v0.0.0-20260813092244-76692af2a712 h1:4ByOZ8g6iV8KxHoNNcM1zxHn7zBFOw/xx4DwEe2D6q4=
-github.com/lxk36/xgc2-orchestration-core v0.0.0-20260813092244-76692af2a712/go.mod h1:vBOLeBbnhqXxvNYC7Om0RjrCU83g7sPB19H9LLIV1Es=
+github.com/lxk36/xgc2-nodes-process v0.0.0-20260813095533-1ff1220c7b46 h1:jT+s0oU/EYe/WgiqscE7Q/n7oxl07itOnZsxE49loI0=
+github.com/lxk36/xgc2-nodes-process v0.0.0-20260813095533-1ff1220c7b46/go.mod h1:VHrxjhQoqnge3GK8tn0GNUe2gDzsa1udjshkU32+Djg=
+github.com/lxk36/xgc2-orchestration-core v0.0.0-20260813094424-c52ef785818f h1:gBF5yvAyhH6d02hbxyzcxQSrxzVYtiw81S/xlJhy+6I=
+github.com/lxk36/xgc2-orchestration-core v0.0.0-20260813094424-c52ef785818f/go.mod h1:vBOLeBbnhqXxvNYC7Om0RjrCU83g7sPB19H9LLIV1Es=

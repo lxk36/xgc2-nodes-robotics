@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lxk36/xgc2-nodes-robotics/processlaunch"
-	"github.com/lxk36/xgc2-nodes-robotics/processstop"
+	"github.com/lxk36/xgc2-nodes-process/processlaunch"
+	"github.com/lxk36/xgc2-nodes-process/processstop"
 	"github.com/lxk36/xgc2-nodes-robotics/topology"
 	"github.com/lxk36/xgc2-orchestration-core/controller"
 	"github.com/lxk36/xgc2-orchestration-core/durable/filestore"

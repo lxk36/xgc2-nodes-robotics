@@ -12,14 +12,6 @@ Current nodes:
 - `xgc.robotics.runtime-topology-assert/v1` consumes real ready-process
   Receipts, rejects duplicate binding/external identities, and proves exact
   robot-kind counts before an experiment enters Hold;
-- `xgc.robotics.process-launch/v1` emits a Run-owned managed-process Effect,
-  waits for
-  immutable provider Receipts, and folds the terminal result through pure
-  `Resume` without re-running the effectful node; the core compensates applied
-  launches in reverse order on normal completion or failure;
-- `xgc.robotics.process-stop/v1` consumes only the prior external identity
-  reference and producing Run owner, while the private provider boundary
-  restores the original spec and exact PID/PGID/start-tick identity; and
 - `xgc.robotics.fs150-model-spawn/v1` emits one finite structured Render+Spawn
   Effect while keeping SDF paths, helper scripts, and ROS environment private
   to the installed product provider.
@@ -29,7 +21,8 @@ idempotency keys, and capability tokens are resolved behind the core process
 adapter. They are never present in the public node input or durable workflow
 state.
 
-Linux acceptance tests under `acceptance/` execute both required profiles twice
+Linux acceptance tests under `acceptance/` compose this robotics pack with the
+public `xgc2-nodes-process` pack and execute both required profiles twice
 continuously through the public orchestration core and local process provider:
 
 - E1: exactly six PX4 plus four Scout targets, with 20 real starts, 20 exact
