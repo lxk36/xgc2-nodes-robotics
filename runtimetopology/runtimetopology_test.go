@@ -17,10 +17,11 @@ func TestRuntimeTopologyRequiresUniqueReadyIdentitiesAndExactCounts(t *testing.T
 			map[string]any{"kind": "scout-mini", "count": int64(1)},
 		},
 		"observed": []any{
-			map[string]any{"bindingId": "px4-01", "kind": "px4-multirotor", "externalIdentity": "process-px4-01"},
-			map[string]any{"bindingId": "px4-02", "kind": "px4-multirotor", "externalIdentity": "process-px4-02"},
-			map[string]any{"bindingId": "scout-01", "kind": "scout-mini", "externalIdentity": "process-scout-01"},
+			map[string]any{"bindingId": "px4-01", "kind": "px4-multirotor"},
+			map[string]any{"bindingId": "px4-02", "kind": "px4-multirotor"},
+			map[string]any{"bindingId": "scout-01", "kind": "scout-mini"},
 		},
+		"externalIdentities": []any{"process-px4-01", "process-px4-02", "process-scout-01"},
 	}
 	digest, _ := canonicaljson.DigestValue(input)
 	request := contracts.NodeInvocationRequest{Input: input, InputDigest: digest, RequestedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
@@ -29,7 +30,7 @@ func TestRuntimeTopologyRequiresUniqueReadyIdentitiesAndExactCounts(t *testing.T
 		t.Fatalf("runtime topology result=%#v err=%v", result, err)
 	}
 	duplicate := cloneInput(input)
-	duplicate["observed"].([]any)[1].(map[string]any)["externalIdentity"] = "process-px4-01"
+	duplicate["externalIdentities"].([]any)[1] = "process-px4-01"
 	request.Input = duplicate
 	result, err = executor.Execute(t.Context(), request)
 	if err != nil || result.Status != contracts.NodeResultFailed || result.Failure == nil || result.Failure.Code != "runtime-topology.observed-invalid" {

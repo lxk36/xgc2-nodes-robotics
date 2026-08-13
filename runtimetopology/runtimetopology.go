@@ -22,20 +22,26 @@ func New() *Executor {
 	member := contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
 		"kind": stringSchema, "count": {Type: contracts.TypeInteger},
 	}, Required: []string{"kind", "count"}}
-	binding := contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
+	observedBinding := contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
+		"bindingId": stringSchema, "kind": stringSchema,
+	}, Required: []string{"bindingId", "kind"}}
+	outputBinding := contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
 		"bindingId": stringSchema, "kind": stringSchema, "externalIdentity": stringSchema,
 	}, Required: []string{"bindingId", "kind", "externalIdentity"}}
 	members := contracts.Schema{Type: contracts.TypeArray, Items: &member}
-	bindings := contracts.Schema{Type: contracts.TypeArray, Items: &binding}
+	observedBindings := contracts.Schema{Type: contracts.TypeArray, Items: &observedBinding}
+	outputBindings := contracts.Schema{Type: contracts.TypeArray, Items: &outputBinding}
+	externalIdentities := contracts.Schema{Type: contracts.TypeArray, Items: &stringSchema}
 	descriptor := contracts.NodeDescriptor{
 		SchemaVersion: protocol.DescriptorSchemaVersion,
 		TypeRef:       "xgc.robotics.runtime-topology-assert/v1", DisplayName: "Ready runtime topology assertion",
 		PackageRef: "xgc2-nodes-robotics", PackageDigest: packageDigest,
 		InputSchema: contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
-			"profileId": stringSchema, "expected": members, "observed": bindings,
-		}, Required: []string{"profileId", "expected", "observed"}},
+			"profileId": stringSchema, "expected": members, "observed": observedBindings,
+			"externalIdentities": externalIdentities,
+		}, Required: []string{"profileId", "expected", "observed", "externalIdentities"}},
 		OutputSchema: contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
-			"profileId": stringSchema, "members": members, "bindings": bindings,
+			"profileId": stringSchema, "members": members, "bindings": outputBindings,
 			"total": {Type: contracts.TypeInteger}, "matched": {Type: contracts.TypeBoolean},
 		}, Required: []string{"profileId", "members", "bindings", "total", "matched"}},
 		Mode: contracts.NodePure, Determinism: contracts.NodeDeterministic,
@@ -56,7 +62,7 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 	if err != nil {
 		return failed("runtime-topology.expected-invalid", err), nil
 	}
-	bindings, counts, err := normalizeBindings(request.Input["observed"])
+	bindings, counts, err := normalizeBindings(request.Input["observed"], request.Input["externalIdentities"])
 	if err != nil {
 		return failed("runtime-topology.observed-invalid", err), nil
 	}
@@ -106,23 +112,27 @@ func normalizeMembers(value any) ([]any, int64, error) {
 	return memberValues(counts), total, nil
 }
 
-func normalizeBindings(value any) ([]any, map[string]int64, error) {
+func normalizeBindings(value, identitiesValue any) ([]any, map[string]int64, error) {
 	raw, ok := value.([]any)
 	if !ok || len(raw) == 0 {
 		return nil, nil, errors.New("observed ready runtime bindings are required")
+	}
+	identities, ok := identitiesValue.([]any)
+	if !ok || len(identities) != len(raw) {
+		return nil, nil, errors.New("one external runtime identity is required per observed binding")
 	}
 	bindings := make([]any, 0, len(raw))
 	counts := make(map[string]int64)
 	seenBindings := make(map[string]struct{}, len(raw))
 	seenExternal := make(map[string]struct{}, len(raw))
-	for _, item := range raw {
+	for index, item := range raw {
 		binding, ok := item.(map[string]any)
 		if !ok {
 			return nil, nil, errors.New("observed runtime binding is not an object")
 		}
 		bindingID, bindingOK := binding["bindingId"].(string)
 		kind, kindOK := binding["kind"].(string)
-		external, externalOK := binding["externalIdentity"].(string)
+		external, externalOK := identities[index].(string)
 		_, duplicateBinding := seenBindings[bindingID]
 		_, duplicateExternal := seenExternal[external]
 		if !bindingOK || !kindOK || !externalOK || !contracts.ValidIdentifier(bindingID) ||
