@@ -2,6 +2,7 @@ package fleetspec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 
@@ -72,6 +73,9 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 
 func integer(value any) (int64, bool) {
 	switch typed := value.(type) {
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
 	case int64:
 		return typed, true
 	case int:
