@@ -8,10 +8,15 @@ Current nodes:
 
 - `xgc.robotics.fleet-spec/v1` normalizes a heterogeneous fleet;
 - `xgc.robotics.topology-assert/v1` fails before mutation unless the actual
-  PX4/Scout/mecanum topology exactly matches the authored profile; and
-- `xgc.robotics.process-launch/v1` emits a managed-process Effect, waits for
+  PX4/Scout/mecanum topology exactly matches the authored profile;
+- `xgc.robotics.runtime-topology-assert/v1` consumes real ready-process
+  Receipts, rejects duplicate binding/external identities, and proves exact
+  robot-kind counts before an experiment enters Hold;
+- `xgc.robotics.process-launch/v1` emits a Run-owned managed-process Effect,
+  waits for
   immutable provider Receipts, and folds the terminal result through pure
-  `Resume` without re-running the effectful node; and
+  `Resume` without re-running the effectful node; the core compensates applied
+  launches in reverse order on normal completion or failure;
 - `xgc.robotics.process-stop/v1` consumes only the prior external identity
   reference and producing Run owner, while the private provider boundary
   restores the original spec and exact PID/PGID/start-tick identity; and
@@ -33,4 +38,6 @@ continuously through the public orchestration core and local process provider:
   stops, and zero live fixture processes after two rounds;
 - topology mismatch: no Effect or process may be created; and
 - resolver failure: the Effect becomes `uncertain` and the Run remains
-  closure-blocked in `stopping` until reconciliation proves the external state.
+  closure-blocked in `stopping` until reconciliation proves the external state;
+- mid-launch failure: every earlier applied process is compensated and zero
+  fixture processes remain live even while the uncertain Effect blocks closure.
