@@ -14,7 +14,10 @@ Current nodes:
   `Resume` without re-running the effectful node; and
 - `xgc.robotics.process-stop/v1` consumes only the prior external identity
   reference and producing Run owner, while the private provider boundary
-  restores the original spec and exact PID/PGID/start-tick identity.
+  restores the original spec and exact PID/PGID/start-tick identity; and
+- `xgc.robotics.fs150-model-spawn/v1` emits one finite structured Render+Spawn
+  Effect while keeping SDF paths, helper scripts, and ROS environment private
+  to the installed product provider.
 
 Executable paths, argument/environment values, working directories, log paths,
 idempotency keys, and capability tokens are resolved behind the core process
