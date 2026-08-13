@@ -42,7 +42,8 @@ func TestLaunchProposesProcessEffectAndPureResume(t *testing.T) {
 	}
 	result, err := registry.Execute(t.Context(), request)
 	if err != nil || result.Status != contracts.NodeResultWaiting || len(result.Effects) != 1 ||
-		result.Effects[0].Kind != processadapter.KindStart || result.Effects[0].TargetRef != "e1-px4-1" {
+		result.Effects[0].Kind != processadapter.KindStart || result.Effects[0].TargetRef != "e1-px4-1" ||
+		result.Effects[0].Ownership != contracts.EffectOwned || result.Effects[0].CompensationPolicy != contracts.CompensationRequired {
 		t.Fatalf("launch result = %#v, err=%v", result, err)
 	}
 	payload := map[string]any{

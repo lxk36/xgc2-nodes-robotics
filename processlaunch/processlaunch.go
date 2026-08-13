@@ -1,7 +1,8 @@
 // Package processlaunch provides the effectful boundary for starting one
-// managed robotics/simulation process. It emits a public ProcessSpec and waits;
-// executable paths, arguments, environment values, log paths, and capability
-// tokens remain private provider data.
+// managed robotics/simulation process. It emits a Run-owned public ProcessSpec
+// and waits; the orchestration Saga must compensate the exact applied Effect
+// before terminal closure. Executable paths, arguments, environment values,
+// log paths, and capability tokens remain private provider data.
 package processlaunch
 
 import (
@@ -94,7 +95,7 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 	proposal := contracts.EffectProposal{
 		EffectKey: effectKey, Kind: processadapter.KindStart, TargetRef: bindingID,
 		IntentSchemaDigest: packageDigest, Intent: intent, IntentDigest: intentDigest,
-		Ownership: contracts.EffectDetached, CompensationPolicy: contracts.CompensationNone,
+		Ownership: contracts.EffectOwned, CompensationPolicy: contracts.CompensationRequired,
 		RequiredCapabilityRefs: []string{"process.control"},
 		PolicyDigest:           request.CapabilityGrants[0].AuthorizationDigest, Deadline: request.Deadline,
 	}

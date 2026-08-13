@@ -19,8 +19,6 @@ import (
 	"github.com/lxk36/xgc2-nodes-robotics/topology"
 	"github.com/lxk36/xgc2-orchestration-core/controller"
 	"github.com/lxk36/xgc2-orchestration-core/durable/filestore"
-	"github.com/lxk36/xgc2-orchestration-core/durable/worker"
-	executionkernel "github.com/lxk36/xgc2-orchestration-core/kernel/execution"
 	protocol "github.com/lxk36/xgc2-orchestration-core/kernel/node"
 	workflowkernel "github.com/lxk36/xgc2-orchestration-core/kernel/workflow"
 	effectport "github.com/lxk36/xgc2-orchestration-core/provider/effect"
@@ -67,6 +65,40 @@ func (credentials) ResolveEffectCredentials(_ context.Context, _ contracts.Effec
 		IdempotencyKey:      "idempotency-" + ledger.Envelope.CommandID,
 		CapabilityToken:     "capability-" + ledger.Envelope.CommandID,
 		AuthorizationDigest: acceptanceDigest,
+	}, nil
+}
+
+type effectPlan struct{}
+
+func (effectPlan) PlanEffectDispatch(_ context.Context, current contracts.EffectRecord) (controller.BeginEffectRequest, error) {
+	action, reason := processport.ActionStart, "experiment.launch"
+	if current.Intent.Kind == processadapter.KindStop {
+		action, reason = processport.ActionStop, "experiment.stop"
+	}
+	commandID := "dispatch-" + current.EffectID
+	return controller.BeginEffectRequest{
+		EffectID: current.EffectID, CommandID: commandID,
+		IdempotencyKey: "idempotency-" + commandID, CapabilityToken: "capability-" + commandID,
+		Action: action, ActorRef: "test-operator", SourceRef: "robotics-acceptance",
+		ReasonCode: reason, Risk: contracts.RiskHigh,
+		Fence: contracts.TargetFence{Kind: contracts.FenceGeneration, Generation: &contracts.GenerationFence{
+			BindingID: current.Intent.TargetRef, Generation: 1, FencingToken: 1,
+		}},
+		Deadline: current.Intent.Deadline, CancellationID: "cancel-" + current.EffectID,
+	}, nil
+}
+
+func (effectPlan) PlanEffectCompensation(_ context.Context, current contracts.EffectRecord) (controller.BeginEffectRequest, error) {
+	commandID := "compensate-" + current.EffectID
+	return controller.BeginEffectRequest{
+		EffectID: current.EffectID, CommandID: commandID,
+		IdempotencyKey: "idempotency-" + commandID, CapabilityToken: "capability-" + commandID,
+		Action: processport.ActionStop, ActorRef: "test-operator", SourceRef: "robotics-acceptance",
+		ReasonCode: "experiment.compensate", Risk: contracts.RiskHigh,
+		Fence: contracts.TargetFence{Kind: contracts.FenceGeneration, Generation: &contracts.GenerationFence{
+			BindingID: current.ExternalIdentity, Generation: 1, FencingToken: 1,
+		}},
+		Deadline: time.Now().UTC().Add(time.Minute), CancellationID: "cancel-" + commandID,
 	}, nil
 }
 
@@ -172,15 +204,14 @@ func (runtime *fixtureRuntime) stoppedCount() int {
 }
 
 type harness struct {
-	t          *testing.T
-	store      *filestore.Store
-	controller *controller.Controller
-	runtime    *fixtureRuntime
-	worker     worker.Worker
-	launch     *processlaunch.Executor
-	stop       *processstop.Executor
-	topology   *topology.Executor
-	nextFence  uint64
+	t           *testing.T
+	store       *filestore.Store
+	controller  *controller.Controller
+	coordinator *controller.Coordinator
+	runtime     *fixtureRuntime
+	launch      *processlaunch.Executor
+	stop        *processstop.Executor
+	topology    *topology.Executor
 }
 
 func newHarness(t *testing.T, failRef string) *harness {
@@ -236,23 +267,16 @@ func newHarness(t *testing.T, failRef string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outbox, err := controller.NewEffectOutboxHandler(orchestrator, credentials{}, startAdapter, stopAdapter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	waits, err := controller.NewWaitResolutionHandler(orchestrator)
+	coordinator, err := controller.NewCoordinator(controller.CoordinatorConfig{
+		Controller: orchestrator, Store: durable, Planner: effectPlan{}, Credentials: credentials{},
+		Adapters: []controller.EffectAdapter{startAdapter, stopAdapter}, OwnerRef: "robotics-intent-worker",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &harness{
-		t: t, store: durable, controller: orchestrator, runtime: runtime,
-		worker: worker.Worker{
-			Store: durable, OwnerRef: "robotics-intent-worker",
-			Handlers: map[contracts.DurableIntentKind]worker.Handler{
-				contracts.IntentOutbox: outbox, contracts.IntentWaitResolution: waits,
-			},
-		},
-		launch: launch, stop: stop, topology: topologyExecutor, nextFence: 100,
+		t: t, store: durable, controller: orchestrator, coordinator: coordinator, runtime: runtime,
+		launch: launch, stop: stop, topology: topologyExecutor,
 	}
 }
 
@@ -262,13 +286,13 @@ func TestE1SixPX4FourScoutRunsTwiceContinuously(t *testing.T) {
 		runID := fmt.Sprintf("e1-round-%d", round)
 		run := h.runProfile(runID, e1, "robot-fixture")
 		if run.Status != contracts.RunSucceeded {
-			t.Fatalf("%s = %s, failure=%+v", runID, run.Status, run.PrimaryFailure)
+			effects, _ := h.controller.ListEffects(t.Context(), "", 1000)
+			t.Fatalf("%s = %s, termination=%+v effects=%#v", runID, run.Status, run.Termination, effects)
 		}
 		h.verifyMarkers(runID, e1)
-		stopRun := h.stopProfile(run, e1)
-		if stopRun.Status != contracts.RunSucceeded || h.runtime.activeCount() != 0 {
+		if h.runtime.activeCount() != 0 {
 			effects, _ := h.controller.ListEffects(t.Context(), "", 1000)
-			t.Fatalf("%s stop = %s, active=%d, termination=%+v, effects=%#v", runID, stopRun.Status, h.runtime.activeCount(), stopRun.Termination, effects)
+			t.Fatalf("%s active=%d after compensation, effects=%#v", runID, h.runtime.activeCount(), effects)
 		}
 	}
 	if targets := h.runtime.targets(); len(targets) != 20 || h.runtime.stoppedCount() != 20 {
@@ -282,13 +306,13 @@ func TestE2FivePX4TwoMecanumRunsTwiceContinuously(t *testing.T) {
 		runID := fmt.Sprintf("e2-round-%d", round)
 		run := h.runProfile(runID, e2, "robot-fixture")
 		if run.Status != contracts.RunSucceeded {
-			t.Fatalf("%s = %s, failure=%+v", runID, run.Status, run.PrimaryFailure)
+			effects, _ := h.controller.ListEffects(t.Context(), "", 1000)
+			t.Fatalf("%s = %s, termination=%+v effects=%#v", runID, run.Status, run.Termination, effects)
 		}
 		h.verifyMarkers(runID, e2)
-		stopRun := h.stopProfile(run, e2)
-		if stopRun.Status != contracts.RunSucceeded || h.runtime.activeCount() != 0 {
+		if h.runtime.activeCount() != 0 {
 			effects, _ := h.controller.ListEffects(t.Context(), "", 1000)
-			t.Fatalf("%s stop = %s, active=%d, termination=%+v, effects=%#v", runID, stopRun.Status, h.runtime.activeCount(), stopRun.Termination, effects)
+			t.Fatalf("%s active=%d after compensation, effects=%#v", runID, h.runtime.activeCount(), effects)
 		}
 	}
 	if targets := h.runtime.targets(); len(targets) != 14 || h.runtime.stoppedCount() != 14 {
@@ -326,6 +350,42 @@ func TestResolverFailureBecomesUncertainAndFailsRunClosed(t *testing.T) {
 	}
 }
 
+func TestMidLaunchFailureCompensatesEveryPreviouslyAppliedProcess(t *testing.T) {
+	h := newHarness(t, "denied-fixture")
+	definition, action := h.workflow("e2-mid-failure", e2, "robot-fixture")
+	failedNode := 3 // topology + two successful launches, then deny the third.
+	definition.Nodes[failedNode].FixedInputs["executableRef"] = "denied-fixture"
+	plan, err := workflowkernel.Compile(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	action.DefinitionDigest = plan.DefinitionDigest
+	run := h.invokeAndDrive("e2-mid-failure", definition, action, e2, e2)
+	if run.Status != contracts.RunStopping || run.Termination == nil || run.Termination.PrimaryFailure == nil ||
+		run.Termination.PrimaryFailure.Class != contracts.FailureUncertain {
+		t.Fatalf("mid-launch failure run = %#v", run)
+	}
+	if h.runtime.activeCount() != 0 || h.runtime.stoppedCount() != 2 {
+		t.Fatalf("mid-launch compensation active=%d stopped=%d", h.runtime.activeCount(), h.runtime.stoppedCount())
+	}
+	effects, err := h.controller.ListEffects(t.Context(), "", 100)
+	if err != nil || len(effects) != 3 {
+		t.Fatalf("mid-launch effects = %#v, err=%v", effects, err)
+	}
+	succeededCompensations, uncertain := 0, 0
+	for _, current := range effects {
+		if current.CompensationState == contracts.EffectCompensationSucceeded {
+			succeededCompensations++
+		}
+		if current.State == contracts.EffectUncertain {
+			uncertain++
+		}
+	}
+	if succeededCompensations != 2 || uncertain != 1 {
+		t.Fatalf("mid-launch compensation evidence: succeeded=%d uncertain=%d effects=%#v", succeededCompensations, uncertain, effects)
+	}
+}
+
 func (h *harness) runProfile(runID string, desired profile, executableRef string) contracts.Run {
 	h.t.Helper()
 	definition, action := h.workflow(runID, desired, executableRef)
@@ -352,72 +412,9 @@ func (h *harness) invokeInputAndDrive(runID string, definition contracts.Workflo
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	run, err := h.controller.Drive(h.t.Context(), invoked.Run.RunID)
-	if err != nil {
+	run, err := h.coordinator.AdvanceRun(h.t.Context(), invoked.Run.RunID)
+	if err != nil && !errors.Is(err, controller.ErrRunClosureOpen) {
 		h.t.Fatal(err)
-	}
-	for step := 0; step < 100 && run.Status == contracts.RunWaiting; step++ {
-		effects, listErr := h.controller.ListEffects(h.t.Context(), "", 1000)
-		if listErr != nil {
-			h.t.Fatal(listErr)
-		}
-		var prepared *contracts.EffectRecord
-		for index := range effects {
-			if effects[index].Intent.RunID == runID && effects[index].State == contracts.EffectPrepared {
-				copy := effects[index]
-				prepared = &copy
-				break
-			}
-		}
-		if prepared == nil {
-			h.t.Fatalf("run %s waits without a prepared effect", runID)
-		}
-		h.nextFence++
-		commandID := "dispatch-" + prepared.EffectID
-		action := processport.ActionStart
-		reason := "experiment.launch"
-		if prepared.Intent.Kind == processadapter.KindStop {
-			action = processport.ActionStop
-			reason = "experiment.stop"
-		}
-		_, beginErr := h.controller.BeginEffect(h.t.Context(), controller.BeginEffectRequest{
-			EffectID: prepared.EffectID, CommandID: commandID,
-			IdempotencyKey: "idempotency-" + commandID, CapabilityToken: "capability-" + commandID,
-			Action: action, ActorRef: "test-operator", SourceRef: "robotics-acceptance",
-			ReasonCode: reason, Risk: contracts.RiskHigh,
-			Fence: contracts.TargetFence{Kind: contracts.FenceGeneration, Generation: &contracts.GenerationFence{
-				BindingID: prepared.Intent.TargetRef, Generation: 1, FencingToken: h.nextFence,
-			}},
-			CancellationID: "cancel-" + prepared.EffectID,
-		})
-		if beginErr != nil {
-			h.t.Fatal(beginErr)
-		}
-		batchNow := time.Now().UTC()
-		outboxResult, workerErr := h.worker.RunOnce(h.t.Context(), worker.Batch{
-			Kinds:      []contracts.DurableIntentKind{contracts.IntentOutbox},
-			LeaseToken: "lease-outbox-" + prepared.EffectID,
-			Now:        batchNow, LeaseExpiresAt: batchNow.Add(time.Minute), Limit: 100,
-		})
-		if workerErr != nil || outboxResult.Completed != 1 {
-			h.t.Fatalf("outbox %s = %#v, err=%v", prepared.EffectID, outboxResult, workerErr)
-		}
-		batchNow = time.Now().UTC()
-		waitResult, workerErr := h.worker.RunOnce(h.t.Context(), worker.Batch{
-			Kinds:      []contracts.DurableIntentKind{contracts.IntentWaitResolution},
-			LeaseToken: "lease-wait-" + prepared.EffectID,
-			Now:        batchNow, LeaseExpiresAt: batchNow.Add(time.Minute), Limit: 100,
-		})
-		if workerErr != nil || waitResult.Completed != 1 {
-			currentEffect, _ := h.controller.GetEffect(h.t.Context(), prepared.EffectID)
-			intentID, _ := executionkernel.StableIntentID(contracts.IntentWaitResolution, prepared.EffectID, currentEffect.Revision)
-			intent, _ := h.store.GetIntent(h.t.Context(), intentID)
-			h.t.Fatalf("wait %s = %#v, effect=%s, failure=%+v, err=%v", prepared.EffectID, waitResult, currentEffect.State, intent.LastFailure, workerErr)
-		}
-		run, err = h.controller.GetRun(h.t.Context(), runID)
-		if err != nil {
-			h.t.Fatal(err)
-		}
 	}
 	if !run.Status.Terminal() && run.Status != contracts.RunStopping {
 		h.t.Fatalf("run %s did not terminate: %s", runID, run.Status)
