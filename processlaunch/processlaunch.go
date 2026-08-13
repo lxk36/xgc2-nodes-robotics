@@ -16,7 +16,7 @@ import (
 	"github.com/lxk36/xgc2-orchestration-core/sdk/go/contracts"
 )
 
-const packageDigest = "sha256:80f7c1470da77f490893745170385c3d028f7774f37db201e8eeb821adbc0c09"
+const packageDigest = "sha256:68ee11b0ee87328ea5814c18ba317dcd6864137cfba965dea99ab6a86ef0cda7"
 
 type Executor struct{ descriptor contracts.NodeDescriptor }
 
@@ -25,11 +25,13 @@ func New() *Executor {
 	integerSchema := contracts.Schema{Type: contracts.TypeInteger}
 	input := contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
 		"bindingId": stringSchema, "processId": stringSchema, "version": stringSchema,
-		"executableRef": stringSchema, "argumentTemplateDigest": stringSchema,
+		"definitionDigest": stringSchema, "executableRef": stringSchema, "argumentTemplateDigest": stringSchema,
+		"parameterSetRef": stringSchema, "parameterSetDigest": stringSchema,
 		"stdoutArtifactRef": stringSchema, "stderrArtifactRef": stringSchema,
 		"gracePeriodMillis": integerSchema, "killWaitMillis": integerSchema,
 	}, Required: []string{
-		"bindingId", "processId", "version", "executableRef", "argumentTemplateDigest",
+		"bindingId", "processId", "version", "definitionDigest", "executableRef", "argumentTemplateDigest",
+		"parameterSetRef", "parameterSetDigest",
 		"stdoutArtifactRef", "stderrArtifactRef", "gracePeriodMillis", "killWaitMillis",
 	}}
 	output := contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{
@@ -60,21 +62,27 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 	bindingID, _ := request.Input["bindingId"].(string)
 	processID, _ := request.Input["processId"].(string)
 	version, _ := request.Input["version"].(string)
+	definitionDigest, _ := request.Input["definitionDigest"].(string)
 	executableRef, _ := request.Input["executableRef"].(string)
 	argumentDigest, _ := request.Input["argumentTemplateDigest"].(string)
+	parameterSetRef, _ := request.Input["parameterSetRef"].(string)
+	parameterSetDigest, _ := request.Input["parameterSetDigest"].(string)
 	stdoutRef, _ := request.Input["stdoutArtifactRef"].(string)
 	stderrRef, _ := request.Input["stderrArtifactRef"].(string)
 	grace, graceOK := integer(request.Input["gracePeriodMillis"])
 	killWait, killOK := integer(request.Input["killWaitMillis"])
 	if !contracts.ValidIdentifier(bindingID) || !contracts.ValidIdentifier(processID) || !contracts.ValidIdentifier(version) ||
-		!contracts.ValidIdentifier(executableRef) || !contracts.ValidDigest(argumentDigest) ||
+		!contracts.ValidDigest(definitionDigest) || !contracts.ValidIdentifier(executableRef) ||
+		!contracts.ValidDigest(argumentDigest) || !contracts.ValidIdentifier(parameterSetRef) ||
+		!contracts.ValidDigest(parameterSetDigest) ||
 		!contracts.ValidIdentifier(stdoutRef) || !contracts.ValidIdentifier(stderrRef) ||
 		!graceOK || !killOK || grace < 10 || killWait < 10 {
 		return contracts.NodeResult{}, errors.New("process launch input contains an invalid identity, digest, or timeout")
 	}
 	spec := contracts.ProcessSpec{
 		ProcessID: processID, Version: version, DescriptorDigest: executor.descriptor.DescriptorDigest,
-		ExecutableRef: executableRef, ArgumentTemplateDigest: argumentDigest,
+		DefinitionDigest: definitionDigest, ExecutableRef: executableRef, ArgumentTemplateDigest: argumentDigest,
+		ParameterSetRef: parameterSetRef, ParameterSetDigest: parameterSetDigest,
 		StdoutArtifactRef: stdoutRef, StderrArtifactRef: stderrRef,
 		GracePeriodMillis: uint64(grace), KillWaitMillis: uint64(killWait),
 	}

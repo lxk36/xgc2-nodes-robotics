@@ -349,7 +349,9 @@ func (h *harness) workflow(runID string, desired profile, executableRef string) 
 			InputSchema:      launchDescriptor.InputSchema, OutputSchema: launchDescriptor.OutputSchema,
 			FixedInputs: map[string]any{
 				"bindingId": instance, "processId": instance, "version": "v1",
-				"executableRef": executableRef, "argumentTemplateDigest": acceptanceDigest,
+				"definitionDigest": acceptanceDigest, "executableRef": executableRef,
+				"argumentTemplateDigest": acceptanceDigest,
+				"parameterSetRef":        "defaults", "parameterSetDigest": acceptanceDigest,
 				"stdoutArtifactRef": "stdout-" + instance, "stderrArtifactRef": "stderr-" + instance,
 				"gracePeriodMillis": int64(100), "killWaitMillis": int64(1000),
 			},

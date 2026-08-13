@@ -23,7 +23,8 @@ func TestLaunchProposesProcessEffectAndPureResume(t *testing.T) {
 	}
 	input := map[string]any{
 		"bindingId": "e1-px4-1", "processId": "px4-1", "version": "v1",
-		"executableRef": "robot-fixture", "argumentTemplateDigest": testDigest,
+		"definitionDigest": testDigest, "executableRef": "robot-fixture", "argumentTemplateDigest": testDigest,
+		"parameterSetRef": "defaults", "parameterSetDigest": testDigest,
 		"stdoutArtifactRef": "stdout-e1-px4-1", "stderrArtifactRef": "stderr-e1-px4-1",
 		"gracePeriodMillis": int64(100), "killWaitMillis": int64(1000),
 	}
