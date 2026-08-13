@@ -24,4 +24,5 @@ continuously through the public orchestration core and local process provider:
 - E1: exactly six PX4 plus four Scout targets (20 starts over two rounds);
 - E2: exactly five PX4 plus two mecanum targets (14 starts over two rounds);
 - topology mismatch: no Effect or process may be created; and
-- resolver failure: the Effect becomes `uncertain` and the Run fails closed.
+- resolver failure: the Effect becomes `uncertain` and the Run remains
+  closure-blocked in `stopping` until reconciliation proves the external state.

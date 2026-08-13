@@ -218,12 +218,16 @@ func TestTopologyMismatchFailsBeforeAnyProcessEffect(t *testing.T) {
 func TestResolverFailureBecomesUncertainAndFailsRunClosed(t *testing.T) {
 	h := newHarness(t, "denied-fixture")
 	run := h.runProfile("e2-denied", e2, "denied-fixture")
-	if run.Status != contracts.RunFailed || run.PrimaryFailure == nil || run.PrimaryFailure.Class != contracts.FailureUncertain {
-		t.Fatalf("resolver failure run = %#v, failure=%+v", run, run.PrimaryFailure)
+	if run.Status != contracts.RunStopping || run.Termination == nil || run.Termination.PrimaryFailure == nil ||
+		run.Termination.PrimaryFailure.Class != contracts.FailureUncertain {
+		t.Fatalf("resolver failure run = %#v", run)
 	}
 	effects, err := h.controller.ListEffects(t.Context(), "", 100)
 	if err != nil || len(effects) != 1 || effects[0].State != contracts.EffectUncertain {
 		t.Fatalf("resolver failure effects = %#v, err=%v", effects, err)
+	}
+	if _, err := h.controller.Drive(t.Context(), run.RunID); !errors.Is(err, controller.ErrRunClosureOpen) {
+		t.Fatalf("uncertain run did not remain closure-blocked: %v", err)
 	}
 }
 
@@ -308,7 +312,7 @@ func (h *harness) invokeAndDrive(runID string, definition contracts.WorkflowDefi
 			h.t.Fatal(err)
 		}
 	}
-	if !run.Status.Terminal() {
+	if !run.Status.Terminal() && run.Status != contracts.RunStopping {
 		h.t.Fatalf("run %s did not terminate: %s", runID, run.Status)
 	}
 	return run
