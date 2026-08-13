@@ -16,7 +16,7 @@ import (
 	"github.com/lxk36/xgc2-orchestration-core/sdk/go/contracts"
 )
 
-const packageDigest = "sha256:68ee11b0ee87328ea5814c18ba317dcd6864137cfba965dea99ab6a86ef0cda7"
+const packageDigest = "sha256:f3cdf4a8295dd0bc04e5c4a7661bce8fc432c22bd95be08091663a8c969adc37"
 
 type Executor struct{ descriptor contracts.NodeDescriptor }
 
@@ -71,7 +71,7 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 	stderrRef, _ := request.Input["stderrArtifactRef"].(string)
 	grace, graceOK := integer(request.Input["gracePeriodMillis"])
 	killWait, killOK := integer(request.Input["killWaitMillis"])
-	if !contracts.ValidIdentifier(bindingID) || !contracts.ValidIdentifier(processID) || !contracts.ValidIdentifier(version) ||
+	if !contracts.ValidIdentifier(bindingID) || !contracts.ValidIdentifier(processID) || !contracts.ValidVersion(version) ||
 		!contracts.ValidDigest(definitionDigest) || !contracts.ValidIdentifier(executableRef) ||
 		!contracts.ValidDigest(argumentDigest) || !contracts.ValidIdentifier(parameterSetRef) ||
 		!contracts.ValidDigest(parameterSetDigest) ||
