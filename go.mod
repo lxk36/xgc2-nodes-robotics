@@ -2,4 +2,4 @@ module github.com/lxk36/xgc2-nodes-robotics
 
 go 1.26.2
 
-require github.com/lxk36/xgc2-orchestration-core v0.0.0-20260813062556-54f2661ac4df
+require github.com/lxk36/xgc2-orchestration-core v0.0.0-20260813065823-66d8ad9d579b
