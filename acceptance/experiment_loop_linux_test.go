@@ -15,13 +15,16 @@ import (
 	"time"
 
 	"github.com/lxk36/xgc2-nodes-robotics/processlaunch"
+	"github.com/lxk36/xgc2-nodes-robotics/processstop"
 	"github.com/lxk36/xgc2-nodes-robotics/topology"
 	"github.com/lxk36/xgc2-orchestration-core/controller"
 	"github.com/lxk36/xgc2-orchestration-core/durable/filestore"
 	"github.com/lxk36/xgc2-orchestration-core/durable/worker"
+	executionkernel "github.com/lxk36/xgc2-orchestration-core/kernel/execution"
 	protocol "github.com/lxk36/xgc2-orchestration-core/kernel/node"
 	workflowkernel "github.com/lxk36/xgc2-orchestration-core/kernel/workflow"
 	effectport "github.com/lxk36/xgc2-orchestration-core/provider/effect"
+	processport "github.com/lxk36/xgc2-orchestration-core/provider/process"
 	"github.com/lxk36/xgc2-orchestration-core/provider/processadapter"
 	"github.com/lxk36/xgc2-orchestration-core/provider/processlocal"
 	"github.com/lxk36/xgc2-orchestration-core/sdk/go/contracts"
@@ -67,47 +70,115 @@ func (credentials) ResolveEffectCredentials(_ context.Context, _ contracts.Effec
 	}, nil
 }
 
-type fixtureResolver struct {
-	directory string
-	failRef   string
-	mu        sync.Mutex
-	started   []string
+type privateProcess struct {
+	ownerRunID string
+	spec       contracts.ProcessSpec
+	identity   contracts.ProcessIdentity
 }
 
-func (resolver *fixtureResolver) ResolveProcess(_ context.Context, prepared contracts.EffectIntent, intent processadapter.Intent) (processadapter.Resolution, error) {
-	if intent.Spec.ExecutableRef == resolver.failRef {
+// fixtureRuntime models the private provider-side reference store. Public
+// stop workflows see only an external identity ref and producing Run owner;
+// exact PID/PGID/start-tick data is restored behind ResolveProcess.
+type fixtureRuntime struct {
+	directory string
+	failRef   string
+	provider  *processlocal.Provider
+	mu        sync.Mutex
+	started   []string
+	pending   map[string]privateProcess
+	instances map[string]privateProcess
+	stopped   []string
+}
+
+func (runtime *fixtureRuntime) ResolveProcess(_ context.Context, prepared contracts.EffectIntent, intent processadapter.Intent) (processadapter.Resolution, error) {
+	if prepared.Kind == processadapter.KindStop {
+		runtime.mu.Lock()
+		instance, found := runtime.instances[intent.ExternalIdentityRef]
+		runtime.mu.Unlock()
+		if !found || intent.OwnerRunRef != instance.ownerRunID {
+			return processadapter.Resolution{}, errors.New("exact process identity or producing Run owner was not found")
+		}
+		return processadapter.Resolution{Spec: &instance.spec, KnownIdentity: &instance.identity}, nil
+	}
+	if intent.Spec.ExecutableRef == runtime.failRef {
 		return processadapter.Resolution{}, errors.New("fixture executable reference was deliberately denied")
 	}
 	if intent.Spec.ExecutableRef != "robot-fixture" {
 		return processadapter.Resolution{}, fmt.Errorf("unknown executable ref %q", intent.Spec.ExecutableRef)
 	}
-	resolver.mu.Lock()
-	resolver.started = append(resolver.started, prepared.TargetRef)
-	resolver.mu.Unlock()
+	runtime.mu.Lock()
+	runtime.started = append(runtime.started, prepared.TargetRef)
+	runtime.pending[prepared.TargetRef] = privateProcess{ownerRunID: prepared.RunID, spec: intent.Spec}
+	runtime.mu.Unlock()
 	return processadapter.Resolution{
 		Executable:  "/bin/sh",
-		Arguments:   []string{"-c", "printf '%s\\n' \"$XGC_ROBOT_ID\"; sleep 0.02"},
+		Arguments:   []string{"-c", "printf '%s\\n' \"$XGC_ROBOT_ID\"; exec sleep 60"},
 		Environment: []string{"PATH=/usr/bin:/bin", "XGC_ROBOT_ID=" + prepared.TargetRef},
-		StdoutPath:  filepath.Join(resolver.directory, prepared.TargetRef+".stdout"),
-		StderrPath:  filepath.Join(resolver.directory, prepared.TargetRef+".stderr"),
+		StdoutPath:  filepath.Join(runtime.directory, prepared.TargetRef+".stdout"),
+		StderrPath:  filepath.Join(runtime.directory, prepared.TargetRef+".stderr"),
 	}, nil
 }
 
-func (resolver *fixtureResolver) targets() []string {
-	resolver.mu.Lock()
-	defer resolver.mu.Unlock()
-	result := append([]string(nil), resolver.started...)
+func (runtime *fixtureRuntime) Start(ctx context.Context, dispatch processport.Dispatch) (processport.Result, error) {
+	result, err := runtime.provider.Start(ctx, dispatch)
+	if err != nil || result.Observation == nil || result.Observation.Identity == nil || len(result.Ledger.Receipts) == 0 {
+		return result, err
+	}
+	externalIdentity := result.Ledger.Receipts[len(result.Ledger.Receipts)-1].ExternalIdentity
+	runtime.mu.Lock()
+	instance, found := runtime.pending[dispatch.Envelope.TargetRef]
+	if found {
+		instance.identity = *result.Observation.Identity
+		runtime.instances[externalIdentity] = instance
+		delete(runtime.pending, dispatch.Envelope.TargetRef)
+	}
+	runtime.mu.Unlock()
+	return result, nil
+}
+
+func (runtime *fixtureRuntime) Stop(ctx context.Context, dispatch processport.Dispatch) (processport.Result, error) {
+	result, err := runtime.provider.Stop(ctx, dispatch)
+	if err == nil && result.Observation != nil && result.Observation.State == contracts.RuntimeObservedStopped {
+		runtime.mu.Lock()
+		delete(runtime.instances, dispatch.Envelope.TargetRef)
+		runtime.stopped = append(runtime.stopped, dispatch.Envelope.TargetRef)
+		runtime.mu.Unlock()
+	}
+	return result, err
+}
+
+func (runtime *fixtureRuntime) Inspect(ctx context.Context, request processport.InspectRequest) (contracts.ProcessObservation, error) {
+	return runtime.provider.Inspect(ctx, request)
+}
+
+func (runtime *fixtureRuntime) targets() []string {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	result := append([]string(nil), runtime.started...)
 	sort.Strings(result)
 	return result
+}
+
+func (runtime *fixtureRuntime) activeCount() int {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return len(runtime.instances)
+}
+
+func (runtime *fixtureRuntime) stoppedCount() int {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return len(runtime.stopped)
 }
 
 type harness struct {
 	t          *testing.T
 	store      *filestore.Store
 	controller *controller.Controller
-	resolver   *fixtureResolver
+	runtime    *fixtureRuntime
 	worker     worker.Worker
 	launch     *processlaunch.Executor
+	stop       *processstop.Executor
 	topology   *topology.Executor
 	nextFence  uint64
 }
@@ -121,12 +192,16 @@ func newHarness(t *testing.T, failRef string) *harness {
 	}
 	t.Cleanup(func() { _ = durable.Close() })
 	launch := processlaunch.New()
+	stop := processstop.New()
 	topologyExecutor := topology.New()
 	registry := protocol.NewRegistry()
 	if err := registry.Register(topologyExecutor); err != nil {
 		t.Fatal(err)
 	}
 	if err := registry.Register(launch); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(stop); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := registry.Seal(); err != nil {
@@ -143,15 +218,25 @@ func newHarness(t *testing.T, failRef string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := &fixtureResolver{directory: directory, failRef: failRef}
-	adapter, err := processadapter.New(processadapter.Config{
+	runtime := &fixtureRuntime{
+		directory: directory, failRef: failRef, provider: processProvider,
+		pending: map[string]privateProcess{}, instances: map[string]privateProcess{},
+	}
+	startAdapter, err := processadapter.New(processadapter.Config{
 		Kind: processadapter.KindStart, ProviderRef: "local-process", ProviderDigest: acceptanceDigest,
-		Provider: processProvider, Resolver: resolver,
+		Provider: runtime, Resolver: runtime,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	outbox, err := controller.NewEffectOutboxHandler(orchestrator, credentials{}, adapter)
+	stopAdapter, err := processadapter.New(processadapter.Config{
+		Kind: processadapter.KindStop, ProviderRef: "local-process", ProviderDigest: acceptanceDigest,
+		Provider: runtime, Resolver: runtime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outbox, err := controller.NewEffectOutboxHandler(orchestrator, credentials{}, startAdapter, stopAdapter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,14 +245,14 @@ func newHarness(t *testing.T, failRef string) *harness {
 		t.Fatal(err)
 	}
 	return &harness{
-		t: t, store: durable, controller: orchestrator, resolver: resolver,
+		t: t, store: durable, controller: orchestrator, runtime: runtime,
 		worker: worker.Worker{
 			Store: durable, OwnerRef: "robotics-intent-worker",
 			Handlers: map[contracts.DurableIntentKind]worker.Handler{
 				contracts.IntentOutbox: outbox, contracts.IntentWaitResolution: waits,
 			},
 		},
-		launch: launch, topology: topologyExecutor, nextFence: 100,
+		launch: launch, stop: stop, topology: topologyExecutor, nextFence: 100,
 	}
 }
 
@@ -180,8 +265,13 @@ func TestE1SixPX4FourScoutRunsTwiceContinuously(t *testing.T) {
 			t.Fatalf("%s = %s, failure=%+v", runID, run.Status, run.PrimaryFailure)
 		}
 		h.verifyMarkers(runID, e1)
+		stopRun := h.stopProfile(run, e1)
+		if stopRun.Status != contracts.RunSucceeded || h.runtime.activeCount() != 0 {
+			effects, _ := h.controller.ListEffects(t.Context(), "", 1000)
+			t.Fatalf("%s stop = %s, active=%d, termination=%+v, effects=%#v", runID, stopRun.Status, h.runtime.activeCount(), stopRun.Termination, effects)
+		}
 	}
-	if targets := h.resolver.targets(); len(targets) != 20 {
+	if targets := h.runtime.targets(); len(targets) != 20 || h.runtime.stoppedCount() != 20 {
 		t.Fatalf("E1 two rounds started %d process targets: %#v", len(targets), targets)
 	}
 }
@@ -195,8 +285,13 @@ func TestE2FivePX4TwoMecanumRunsTwiceContinuously(t *testing.T) {
 			t.Fatalf("%s = %s, failure=%+v", runID, run.Status, run.PrimaryFailure)
 		}
 		h.verifyMarkers(runID, e2)
+		stopRun := h.stopProfile(run, e2)
+		if stopRun.Status != contracts.RunSucceeded || h.runtime.activeCount() != 0 {
+			effects, _ := h.controller.ListEffects(t.Context(), "", 1000)
+			t.Fatalf("%s stop = %s, active=%d, termination=%+v, effects=%#v", runID, stopRun.Status, h.runtime.activeCount(), stopRun.Termination, effects)
+		}
 	}
-	if targets := h.resolver.targets(); len(targets) != 14 {
+	if targets := h.runtime.targets(); len(targets) != 14 || h.runtime.stoppedCount() != 14 {
 		t.Fatalf("E2 two rounds started %d process targets: %#v", len(targets), targets)
 	}
 }
@@ -210,8 +305,8 @@ func TestTopologyMismatchFailsBeforeAnyProcessEffect(t *testing.T) {
 		t.Fatalf("mismatched topology run = %#v, failure=%+v", run, run.PrimaryFailure)
 	}
 	effects, err := h.controller.ListEffects(t.Context(), "", 100)
-	if err != nil || len(effects) != 0 || len(h.resolver.targets()) != 0 {
-		t.Fatalf("mismatch produced effects=%d targets=%d err=%v", len(effects), len(h.resolver.targets()), err)
+	if err != nil || len(effects) != 0 || len(h.runtime.targets()) != 0 {
+		t.Fatalf("mismatch produced effects=%d targets=%d err=%v", len(effects), len(h.runtime.targets()), err)
 	}
 }
 
@@ -238,9 +333,12 @@ func (h *harness) runProfile(runID string, desired profile, executableRef string
 }
 
 func (h *harness) invokeAndDrive(runID string, definition contracts.WorkflowDefinition, action contracts.ActionVersion, actual, expected profile) contracts.Run {
+	return h.invokeInputAndDrive(runID, definition, action, profileInput(actual, expected))
+}
+
+func (h *harness) invokeInputAndDrive(runID string, definition contracts.WorkflowDefinition, action contracts.ActionVersion, input map[string]any) contracts.Run {
 	h.t.Helper()
 	now := time.Now().UTC()
-	input := profileInput(actual, expected)
 	invoked, err := h.controller.Invoke(h.t.Context(), controller.InvokeRequest{
 		RunID: runID, NamespaceID: "robotics-acceptance", Action: action, Definition: definition,
 		Trigger: contracts.TriggerEvent{
@@ -276,11 +374,17 @@ func (h *harness) invokeAndDrive(runID string, definition contracts.WorkflowDefi
 		}
 		h.nextFence++
 		commandID := "dispatch-" + prepared.EffectID
+		action := processport.ActionStart
+		reason := "experiment.launch"
+		if prepared.Intent.Kind == processadapter.KindStop {
+			action = processport.ActionStop
+			reason = "experiment.stop"
+		}
 		_, beginErr := h.controller.BeginEffect(h.t.Context(), controller.BeginEffectRequest{
 			EffectID: prepared.EffectID, CommandID: commandID,
 			IdempotencyKey: "idempotency-" + commandID, CapabilityToken: "capability-" + commandID,
-			Action: "process.start", ActorRef: "test-operator", SourceRef: "robotics-acceptance",
-			ReasonCode: "experiment.launch", Risk: contracts.RiskHigh,
+			Action: action, ActorRef: "test-operator", SourceRef: "robotics-acceptance",
+			ReasonCode: reason, Risk: contracts.RiskHigh,
 			Fence: contracts.TargetFence{Kind: contracts.FenceGeneration, Generation: &contracts.GenerationFence{
 				BindingID: prepared.Intent.TargetRef, Generation: 1, FencingToken: h.nextFence,
 			}},
@@ -305,7 +409,10 @@ func (h *harness) invokeAndDrive(runID string, definition contracts.WorkflowDefi
 			Now:        batchNow, LeaseExpiresAt: batchNow.Add(time.Minute), Limit: 100,
 		})
 		if workerErr != nil || waitResult.Completed != 1 {
-			h.t.Fatalf("wait %s = %#v, err=%v", prepared.EffectID, waitResult, workerErr)
+			currentEffect, _ := h.controller.GetEffect(h.t.Context(), prepared.EffectID)
+			intentID, _ := executionkernel.StableIntentID(contracts.IntentWaitResolution, prepared.EffectID, currentEffect.Revision)
+			intent, _ := h.store.GetIntent(h.t.Context(), intentID)
+			h.t.Fatalf("wait %s = %#v, effect=%s, failure=%+v, err=%v", prepared.EffectID, waitResult, currentEffect.State, intent.LastFailure, workerErr)
 		}
 		run, err = h.controller.GetRun(h.t.Context(), runID)
 		if err != nil {
@@ -316,6 +423,54 @@ func (h *harness) invokeAndDrive(runID string, definition contracts.WorkflowDefi
 		h.t.Fatalf("run %s did not terminate: %s", runID, run.Status)
 	}
 	return run
+}
+
+func (h *harness) stopProfile(startRun contracts.Run, desired profile) contracts.Run {
+	h.t.Helper()
+	snapshot, _, err := h.controller.GetSnapshot(h.t.Context(), startRun.RunID)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	descriptor := h.stop.Descriptor()
+	empty := contracts.Schema{Type: contracts.TypeObject, Properties: map[string]contracts.Schema{}}
+	stopRunID := startRun.RunID + "-stop"
+	definition := contracts.WorkflowDefinition{
+		SchemaVersion: workflowkernel.SchemaVersion, WorkflowID: "robotics-" + stopRunID, Version: "v1",
+		InputSchema: empty, ResultSchema: empty, TriggerSchema: empty, ScopeSchema: empty,
+		Entrypoints: map[string]string{"main": ""}, ResultBindings: map[string][]contracts.ValueBinding{"main": {}},
+	}
+	previous := ""
+	for _, instance := range expand(startRun.RunID, desired) {
+		output := snapshot.NodeOutputs["launch-"+instance]
+		externalIdentity, ok := output["externalIdentity"].(string)
+		if !ok || !contracts.ValidIdentifier(externalIdentity) {
+			h.t.Fatalf("start output for %s has no exact external identity: %#v", instance, output)
+		}
+		nodeID := "stop-" + instance
+		definition.Nodes = append(definition.Nodes, contracts.WorkflowNodeDefinition{
+			NodeID: nodeID, TypeRef: descriptor.TypeRef, DescriptorDigest: descriptor.DescriptorDigest,
+			InputSchema: descriptor.InputSchema, OutputSchema: descriptor.OutputSchema,
+			FixedInputs: map[string]any{
+				"bindingId": instance, "ownerRunRef": startRun.RunID, "externalIdentityRef": externalIdentity,
+			},
+		})
+		if previous == "" {
+			definition.Entrypoints["main"] = nodeID
+		} else {
+			definition.Edges = append(definition.Edges, contracts.WorkflowEdge{From: previous, To: nodeID, Kind: contracts.EdgeControl})
+		}
+		previous = nodeID
+	}
+	plan, err := workflowkernel.Compile(definition)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	action := contracts.ActionVersion{
+		ActionID: definition.WorkflowID, Version: definition.Version, DefinitionDigest: plan.DefinitionDigest,
+		Entrypoint: "main", InputSchema: empty, ResultSchema: empty,
+		AcceptedTriggerKinds: []contracts.TriggerKind{contracts.TriggerManual},
+	}
+	return h.invokeInputAndDrive(stopRunID, definition, action, map[string]any{})
 }
 
 func (h *harness) workflow(runID string, desired profile, executableRef string) (contracts.WorkflowDefinition, contracts.ActionVersion) {
@@ -378,7 +533,7 @@ func (h *harness) workflow(runID string, desired profile, executableRef string) 
 func (h *harness) verifyMarkers(runID string, desired profile) {
 	h.t.Helper()
 	for _, target := range expand(runID, desired) {
-		path := filepath.Join(h.resolver.directory, target+".stdout")
+		path := filepath.Join(h.runtime.directory, target+".stdout")
 		deadline := time.Now().Add(3 * time.Second)
 		for {
 			raw, err := os.ReadFile(path)
