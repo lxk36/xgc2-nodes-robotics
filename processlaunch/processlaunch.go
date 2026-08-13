@@ -16,7 +16,7 @@ import (
 	"github.com/lxk36/xgc2-orchestration-core/sdk/go/contracts"
 )
 
-const packageDigest = "sha256:f3cdf4a8295dd0bc04e5c4a7661bce8fc432c22bd95be08091663a8c969adc37"
+const packageDigest = "sha256:5732626fc21cc28c3ec47526c4e5934bd14fef15589ad3f9982af4ad49f0774b"
 
 type Executor struct{ descriptor contracts.NodeDescriptor }
 
@@ -46,7 +46,6 @@ func New() *Executor {
 		Mode: contracts.NodeEffectful, Determinism: contracts.NodeDeterministic,
 		RequiredCapabilities: []contracts.CapabilityRequirement{{CapabilityRef: "process.control", Scope: "target"}},
 		AllowedEffectKinds:   []string{processadapter.KindStart},
-		CompensationTypeRef:  "xgc.robotics.process-stop/v1",
 		MaxInputBytes:        65536, MaxOutputBytes: 65536,
 	}
 	descriptor.DescriptorDigest, _ = protocol.DescriptorDigest(descriptor)
@@ -95,7 +94,7 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 	proposal := contracts.EffectProposal{
 		EffectKey: effectKey, Kind: processadapter.KindStart, TargetRef: bindingID,
 		IntentSchemaDigest: packageDigest, Intent: intent, IntentDigest: intentDigest,
-		Ownership: contracts.EffectOwned, CompensationPolicy: contracts.CompensationRequired,
+		Ownership: contracts.EffectDetached, CompensationPolicy: contracts.CompensationNone,
 		RequiredCapabilityRefs: []string{"process.control"},
 		PolicyDigest:           request.CapabilityGrants[0].AuthorizationDigest, Deadline: request.Deadline,
 	}
