@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/lxk36/xgc2-orchestration-core/kernel/canonicaljson"
+	protocol "github.com/lxk36/xgc2-orchestration-core/kernel/node"
 	"github.com/lxk36/xgc2-orchestration-core/sdk/go/contracts"
 )
 
@@ -21,7 +22,8 @@ func TestFS150ModelSpawnEmitsOnlyFiniteStructuredIntent(t *testing.T) {
 	digest, _ := canonicaljson.DigestValue(input)
 	now := time.Now().UTC()
 	result, err := executor.Execute(t.Context(), contracts.NodeInvocationRequest{
-		InvocationID: "invocation-1", RunID: "run-1", NodeID: "spawn-model",
+		SchemaVersion: protocol.InvocationSchemaVersion,
+		InvocationID:  "invocation-1", RunID: "run-1", NodeID: "spawn-model",
 		TypeRef: executor.Descriptor().TypeRef, DescriptorDigest: executor.Descriptor().DescriptorDigest,
 		AttemptID: "attempt-1", AttemptOrdinal: 1, Input: input, InputDigest: digest,
 		CapabilityGrants: []contracts.CapabilityGrant{{CapabilityRef: "simulation.control", Scope: "target", HandleRef: "grant-1", AuthorizationDigest: testPolicyDigest, ExpiresAt: now.Add(time.Minute)}},

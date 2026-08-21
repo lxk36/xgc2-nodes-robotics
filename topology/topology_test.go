@@ -41,7 +41,8 @@ func topologyRequest(t *testing.T, executor *Executor, profile string, actual, e
 	digest, _ := canonicaljson.DigestValue(input)
 	t0 := time.Date(2026, 8, 13, 4, 30, 0, 0, time.UTC)
 	return contracts.NodeInvocationRequest{
-		InvocationID: "inv-topology", RunID: "run-topology", NodeID: "topology",
+		SchemaVersion: protocol.InvocationSchemaVersion,
+		InvocationID:  "inv-topology", RunID: "run-topology", NodeID: "topology",
 		TypeRef: executor.Descriptor().TypeRef, DescriptorDigest: executor.Descriptor().DescriptorDigest,
 		AttemptID: "attempt-topology", AttemptOrdinal: 1, Input: input, InputDigest: digest,
 		RequestedAt: t0, Deadline: t0.Add(time.Minute),

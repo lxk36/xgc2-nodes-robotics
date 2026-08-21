@@ -98,7 +98,8 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 		return contracts.NodeResult{}, err
 	}
 	return contracts.NodeResult{
-		Status: contracts.NodeResultWaiting, Effects: []contracts.EffectProposal{proposal},
+		SchemaVersion: protocol.ResultSchemaVersion,
+		Status:        contracts.NodeResultWaiting, Effects: []contracts.EffectProposal{proposal},
 		Wait:           &contracts.NodeWait{Kind: contracts.NodeWaitEffect, SubjectRef: effectKey, ConditionDigest: intentDigest, ExpiresAt: timePointer(request.Deadline)},
 		EvidenceDigest: evidence,
 	}, nil
@@ -128,7 +129,7 @@ func (executor *Executor) Resume(_ context.Context, request contracts.NodeResume
 	if err != nil {
 		return contracts.NodeResult{}, err
 	}
-	return contracts.NodeResult{Status: contracts.NodeResultSucceeded, Output: output, OutputDigest: digest, EvidenceDigest: evidence}, nil
+	return contracts.NodeResult{SchemaVersion: protocol.ResultSchemaVersion, Status: contracts.NodeResultSucceeded, Output: output, OutputDigest: digest, EvidenceDigest: evidence}, nil
 }
 
 func validPose(pose map[string]any) bool {

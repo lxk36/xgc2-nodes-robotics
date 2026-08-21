@@ -68,7 +68,7 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 	if err != nil {
 		return contracts.NodeResult{}, err
 	}
-	return contracts.NodeResult{Status: contracts.NodeResultSucceeded, Output: output, OutputDigest: digest, EvidenceDigest: digest}, nil
+	return contracts.NodeResult{SchemaVersion: protocol.ResultSchemaVersion, Status: contracts.NodeResultSucceeded, Output: output, OutputDigest: digest, EvidenceDigest: digest}, nil
 }
 
 func integer(value any) (int64, bool) {

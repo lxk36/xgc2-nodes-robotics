@@ -19,6 +19,7 @@ import (
 	"github.com/XGC-Team/xgc2-nodes-robotics/topology"
 	"github.com/lxk36/xgc2-orchestration-core/controller"
 	"github.com/lxk36/xgc2-orchestration-core/durable/filestore"
+	"github.com/lxk36/xgc2-orchestration-core/kernel/canonicaljson"
 	protocol "github.com/lxk36/xgc2-orchestration-core/kernel/node"
 	workflowkernel "github.com/lxk36/xgc2-orchestration-core/kernel/workflow"
 	effectport "github.com/lxk36/xgc2-orchestration-core/provider/effect"
@@ -399,12 +400,16 @@ func (h *harness) invokeAndDrive(runID string, definition contracts.WorkflowDefi
 func (h *harness) invokeInputAndDrive(runID string, definition contracts.WorkflowDefinition, action contracts.ActionVersion, input map[string]any) contracts.Run {
 	h.t.Helper()
 	now := time.Now().UTC()
+	triggerSchemaDigest, err := canonicaljson.DigestValue(definition.TriggerSchema)
+	if err != nil {
+		h.t.Fatal(err)
+	}
 	invoked, err := h.controller.Invoke(h.t.Context(), controller.InvokeRequest{
 		RunID: runID, NamespaceID: "robotics-acceptance", Action: action, Definition: definition,
 		Trigger: contracts.TriggerEvent{
 			EventID: "event-" + runID, Kind: contracts.TriggerManual, Version: "v1",
 			OccurredAt: now, ReceivedAt: now, SourceRef: "robotics-acceptance", ActorRef: "test-operator",
-			PayloadSchemaDigest: acceptanceDigest, Payload: map[string]any{},
+			PayloadSchemaDigest: triggerSchemaDigest, Payload: map[string]any{},
 		},
 		Candidate: input, CandidateOrigin: contracts.OriginCaller, CandidateRef: "acceptance-fixture",
 		Scope: map[string]any{}, CommandID: "invoke-" + runID,

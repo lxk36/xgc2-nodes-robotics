@@ -86,7 +86,7 @@ func (executor *Executor) Execute(_ context.Context, request contracts.NodeInvoc
 	if err != nil {
 		return contracts.NodeResult{}, err
 	}
-	return contracts.NodeResult{Status: contracts.NodeResultSucceeded, Output: output, OutputDigest: digest, EvidenceDigest: digest}, nil
+	return contracts.NodeResult{SchemaVersion: protocol.ResultSchemaVersion, Status: contracts.NodeResultSucceeded, Output: output, OutputDigest: digest, EvidenceDigest: digest}, nil
 }
 
 func normalizeMembers(value any) ([]any, int64, error) {
@@ -166,7 +166,7 @@ func memberValues(counts map[string]int64) []any {
 func failed(code string, cause error) contracts.NodeResult {
 	failure := &contracts.StructuredFailure{Class: contracts.FailurePermanent, Code: code, Message: cause.Error()}
 	evidence, _ := canonicaljson.DigestValue(failure)
-	return contracts.NodeResult{Status: contracts.NodeResultFailed, Failure: failure, EvidenceDigest: evidence}
+	return contracts.NodeResult{SchemaVersion: protocol.ResultSchemaVersion, Status: contracts.NodeResultFailed, Failure: failure, EvidenceDigest: evidence}
 }
 
 func integer(value any) (int64, bool) {

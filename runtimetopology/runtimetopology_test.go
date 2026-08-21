@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/lxk36/xgc2-orchestration-core/kernel/canonicaljson"
+	protocol "github.com/lxk36/xgc2-orchestration-core/kernel/node"
 	"github.com/lxk36/xgc2-orchestration-core/sdk/go/contracts"
 )
 
@@ -24,7 +25,7 @@ func TestRuntimeTopologyRequiresUniqueReadyIdentitiesAndExactCounts(t *testing.T
 		"externalIdentities": []any{"process-px4-01", "process-px4-02", "process-scout-01"},
 	}
 	digest, _ := canonicaljson.DigestValue(input)
-	request := contracts.NodeInvocationRequest{Input: input, InputDigest: digest, RequestedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
+	request := contracts.NodeInvocationRequest{SchemaVersion: protocol.InvocationSchemaVersion, Input: input, InputDigest: digest, RequestedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
 	result, err := executor.Execute(t.Context(), request)
 	if err != nil || result.Status != contracts.NodeResultSucceeded || result.Output["total"] != int64(3) {
 		t.Fatalf("runtime topology result=%#v err=%v", result, err)
